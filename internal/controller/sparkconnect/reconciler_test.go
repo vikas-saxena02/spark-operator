@@ -211,6 +211,35 @@ var _ = Describe("mutateServerPod", func() {
 			Expect(container.ReadinessProbe.TCPSocket.Port).To(Equal(intstr.FromInt(sparkConnectServerPort)))
 		})
 
+		It("should pass each generated option as a separate container argument", func() {
+			redactionRegex := "(?i)secret|password|token|access[.]key"
+			conn.Spec.SparkConf = map[string]string{
+				common.SparkDriverExtraJavaOptions: `-Dmessage="hello world"`,
+				"spark.redaction.regex":            redactionRegex,
+			}
+			pod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: conn.Namespace,
+				},
+			}
+			Expect(reconciler.mutateServerPod(context.TODO(), conn, pod)).To(Succeed())
+			Expect(pod.Spec.Containers).NotTo(BeEmpty())
+
+			container := pod.Spec.Containers[0]
+			Expect(container.Command).To(Equal([]string{
+				"bash",
+				"-c",
+				sparkConnectServerEntrypointScript,
+				sparkConnectServerProcessName,
+			}))
+
+			// Every option is its own argument, so nothing is re-split or
+			// re-interpreted by the shell.
+			Expect(container.Args).To(ContainElement("spark.redaction.regex=" + redactionRegex))
+			Expect(container.Args).To(ContainElement(common.SparkDriverExtraJavaOptions + `=-Dmessage="hello world"`))
+			Expect(container.Args).NotTo(ContainElement(ContainSubstring("start-connect-server.sh")))
+		})
+
 		It("should preserve user-provided startup and readiness probes", func() {
 			startupProbe := &corev1.Probe{
 				ProbeHandler: corev1.ProbeHandler{
