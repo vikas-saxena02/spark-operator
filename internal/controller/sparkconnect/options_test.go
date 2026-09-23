@@ -17,9 +17,7 @@ limitations under the License.
 package sparkconnect
 
 import (
-	"bytes"
 	"fmt"
-	"os/exec"
 	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -92,7 +90,7 @@ var _ = Describe("Options functions", func() {
 	})
 
 	Context("sparkConfOption", func() {
-		It("preserves shell-sensitive Spark configuration values", func() {
+		It("passes configuration values through unchanged", func() {
 			config := map[string]string{
 				"spark.redaction.regex":          "(?i)secret|password|token|access[.]key|account[.]key",
 				"spark.driver.extraJavaOptions":  `-Dmessage="hello world" -Dquote='value'`,
@@ -106,12 +104,12 @@ var _ = Describe("Options functions", func() {
 
 			args, err := sparkConfOption(conn)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(shellParsedSparkConfig(args)).To(Equal(config))
+			Expect(parsedSparkConfig(args)).To(Equal(config))
 		})
 	})
 
 	Context("hadoopConfOption", func() {
-		It("preserves shell-sensitive Hadoop configuration values", func() {
+		It("passes configuration values through unchanged", func() {
 			conn := &v1alpha1.SparkConnect{
 				Spec: v1alpha1.SparkConnectSpec{
 					HadoopConf: map[string]string{
@@ -123,7 +121,7 @@ var _ = Describe("Options functions", func() {
 
 			args, err := hadoopConfOption(conn)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(shellParsedSparkConfig(args)).To(Equal(map[string]string{
+			Expect(parsedSparkConfig(args)).To(Equal(map[string]string{
 				"spark.hadoop.fs.example.regex": "(?i)secret|password",
 				"spark.hadoop.fs.example.value": "literal '$HOME' $(printf injected)",
 			}))
@@ -131,19 +129,17 @@ var _ = Describe("Options functions", func() {
 	})
 })
 
-func shellParsedSparkConfig(args []string) map[string]string {
+// parsedSparkConfig reads back the "--conf key=value" pairs exactly as they are
+// handed to the container, without any shell in between.
+func parsedSparkConfig(args []string) map[string]string {
 	GinkgoHelper()
 
-	output, err := exec.Command("bash", "-c", "printf '%s\\0' "+strings.Join(args, " ")).Output()
-	Expect(err).NotTo(HaveOccurred())
+	Expect(len(args) % 2).To(Equal(0))
 
-	fields := bytes.Split(bytes.TrimSuffix(output, []byte{0}), []byte{0})
-	Expect(len(fields) % 2).To(Equal(0))
-
-	config := make(map[string]string, len(fields)/2)
-	for index := 0; index < len(fields); index += 2 {
-		Expect(string(fields[index])).To(Equal("--conf"))
-		key, value, found := strings.Cut(string(fields[index+1]), "=")
+	config := make(map[string]string, len(args)/2)
+	for index := 0; index < len(args); index += 2 {
+		Expect(args[index]).To(Equal("--conf"))
+		key, value, found := strings.Cut(args[index+1], "=")
 		Expect(found).To(BeTrue())
 		config[key] = value
 	}
